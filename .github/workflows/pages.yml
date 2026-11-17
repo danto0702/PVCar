@@ -39,7 +39,7 @@ jobs:
       - name: Preparar el sitio
         run: |
           mkdir -p _site
-          cp -r index.html app.css sw.js manifest.webmanifest js icons _site/
+          cp -r index.html app.css sw.js manifest.webmanifest js icons img _site/
           touch _site/.nojekyll
       - uses: actions/upload-pages-artifact@v3
         with:
