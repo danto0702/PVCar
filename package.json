@@ -1,0 +1,10 @@
+{
+  "name": "pvcar",
+  "private": true,
+  "type": "module",
+  "description": "PV Car · Pascal Video Car — dashcam en bucle, copiloto por voz y bóveda forense (PWA)",
+  "scripts": {
+    "test": "node --test tests/",
+    "start": "python3 -m http.server 8080"
+  }
+}
