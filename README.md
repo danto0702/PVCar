@@ -13,6 +13,7 @@ después como app nativa (ver «Siguientes pasos»).
 |---|---|
 | **3.1 Grabación en bucle (FIFO)** | Cámara trasera → `<canvas>` → `MediaRecorder`. Fragmentos de 1, 3 o 5 min (`.mp4` H.264 donde el navegador lo permite, si no `.webm` VP9/VP8) a 30 FPS. El fragmento nuevo arranca antes de cerrar el anterior: no hay hueco entre clips. |
 | Cuota configurable 4–64 GB | Deslizador con cálculo de horas según 720p (4 Mbps), 1080p (8 Mbps) o 4K (25 Mbps). Si el navegador concede menos espacio, el bucle se ajusta a lo real. |
+| Grabación unida al detener | Cada viaje (de Grabar a Detener) queda como **una grabación** en Videos › Grabaciones: duración total, reproducción seguida de todas las partes y Guardar/compartir de una vez (`js/sesiones.js`, con pruebas). Las partes siguen existiendo por dentro para el bucle y la protección por impacto. |
 | Reciclaje automático | Antes de cada fragmento se borra el clip más antiguo **no protegido** hasta que quepa el siguiente (`js/fifo.js`, con pruebas). |
 | Sandbox `/pbcar_loop/` | Base IndexedDB `pbcar_loop`, privada del navegador para este sitio: nunca toca la galería ni los archivos del teléfono. |
 | Resistencia a golpes y apagones | El video se guarda en trozos de 2 s según llega. Si el teléfono se apaga a mitad de un fragmento, lo grabado queda en disco y se marca «Recuperado» al volver a abrir. |
