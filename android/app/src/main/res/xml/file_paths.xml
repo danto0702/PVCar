@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Videos de la bóveda (carpeta privada de la app) y archivos temporales para compartir. -->
+    <external-files-path name="videos" path="." />
+    <cache-path name="compartir" path="compartir/" />
+</paths>

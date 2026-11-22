@@ -9,6 +9,7 @@ import { generarActa, fotogramaDeArchivo, nombreArchivo } from "./acta.js";
 import { agruparSesiones, duracionTexto } from "./sesiones.js";
 import { Autoarranque } from "./autoarranque.js";
 import { Registro, TIPOS, ORIGENES } from "./registro.js";
+import { esNativo, nativo, sincronizar, base64DeBlob, GrabadorNativo, TelemetriaNativa } from "./nativo.js";
 
 const $ = (id) => document.getElementById(id);
 const CLAVE = "pvcar_ajustes";
@@ -23,13 +24,17 @@ let ajustes = leerAjustes();
 const aceptoTerminos = () => ajustes.bienvenida && ajustes.terminos === TERMINOS;
 function guardarAjustes() { try { localStorage.setItem(CLAVE, JSON.stringify(ajustes)); } catch {} }
 
-const tel = new Telemetria();
-const grab = new Grabador({ video: $("video"), canvas: $("lienzo"), telemetria: tel });
+// En la app Android graba un servicio nativo (sigue en segundo plano); en la web, el navegador.
+if (esNativo) document.documentElement.classList.add("nativo");
+const tel = esNativo ? new TelemetriaNativa() : new Telemetria();
+const grab = esNativo ? new GrabadorNativo({ telemetria: tel }) : new Grabador({ video: $("video"), canvas: $("lienzo"), telemetria: tel });
 const voz = new Voz();
 
 function aplicarAjustes() {
   Object.assign(grab.ajustes, { resolucion: ajustes.resolucion, minutos: ajustes.minutos, cuotaGB: ajustes.cuotaGB, audio: ajustes.audio, placa: ajustes.placa });
   tel.umbral = (SENSIBILIDAD[ajustes.sensibilidad] || SENSIBILIDAD.media).umbral;
+  grab.vibrar = ajustes.vibrar;
+  if (esNativo && grab.grabando) grab.configurar();
 }
 aplicarAjustes();
 
@@ -48,7 +53,17 @@ const vibrar = (p) => { if (!ajustes.vibrar) return; try { navigator.vibrate?.(p
 
 /* ---------- Registro de eventos ---------- */
 const registro = new Registro(localStorage);
-const anotar = (tipo, origen, detalle) => { try { registro.agregar(tipo, { origen, detalle }); } catch {} };
+// En la app Android estos eventos los anota el servicio (también en segundo plano).
+const DEL_SERVICIO = new Set(["inicio", "detencion", "proteccion", "impacto", "sinEspacio", "foto", "llamada", "finLlamada"]);
+const anotar = (tipo, origen, detalle) => { if (esNativo && DEL_SERVICIO.has(tipo)) return; try { registro.agregar(tipo, { origen, detalle }); } catch {} };
+async function importarRegistro() {
+  if (!esNativo) return;
+  try {
+    const { eventos = [] } = await nativo.registro();
+    for (const e of eventos) registro.agregar(e.tipo, { origen: e.origen, detalle: e.detalle, t: e.t });
+    if (eventos.length && $("dlgRegistro").open) pintarRegistro();
+  } catch {}
+}
 
 /* ---------- Pantalla encendida (Wake Lock) ---------- */
 let bloqueo = null;
@@ -107,7 +122,14 @@ async function pintarEspacio() {
 /* ---------- Hash SHA-256 en un worker ---------- */
 let worker = null;
 const pendientes = new Map();
+async function hashNativo(id) {
+  const { hash, bytes } = await nativo.huella(id);
+  await db.actualizarClip(id, (c) => { c.hash = hash; c.hashBytes = bytes; c.hashEn = Date.now(); });
+  if ($("dlgBoveda").open) pintarLista();
+  return hash;
+}
 function hashDe(id) {
+  if (esNativo) return hashNativo(id);
   if (pendientes.has(id)) return pendientes.get(id).promesa;
   if (!worker) {
     worker = new Worker(new URL("./hash-worker.js", import.meta.url), { type: "module" });
@@ -135,13 +157,12 @@ function sellarSiCorresponde(clip) {
 let iniciadaPorAuto = false;
 async function iniciarGrabacion(origen = "manual") {
   if (grab.grabando) return;
-  if (!mimeSoportado()) return avisar("Este navegador no puede grabar video. Usa Chrome en Android o Safari 14.5+ en iPhone.", { tono: "mal" });
-  await tel.pedirPermisoMovimiento();
-  tel.iniciar();
+  if (!esNativo && !mimeSoportado()) return avisar("Este navegador no puede grabar video. Usa Chrome en Android o Safari 14.5+ en iPhone.", { tono: "mal" });
+  if (!esNativo) { await tel.pedirPermisoMovimiento(); tel.iniciar(); }
   try {
-    await grab.iniciar();
+    await grab.iniciar(origen);
   } catch (err) {
-    const msg = err?.name === "NotAllowedError" ? "Sin permiso para la cámara. Actívalo en los ajustes del navegador." :
+    const msg = err?.name === "NotAllowedError" ? (esNativo ? "Sin permiso para la cámara. Actívalo en Ajustes › Apps › PV Car › Permisos." : "Sin permiso para la cámara. Actívalo en los ajustes del navegador.") :
       err?.name === "NotFoundError" ? "No se encontró una cámara." : `No se pudo iniciar la cámara (${err?.message || err}).`;
     avisar(msg, { tono: "mal", hablar: true });
     pintarRec();
@@ -155,12 +176,12 @@ async function iniciarGrabacion(origen = "manual") {
   mantenerPantalla(true);
   pintarRec();
   if (ajustes.voz) encenderVoz();
-  avisar(origen === "auto" ? "Grabación iniciada automáticamente" : "Grabación activada", { hablar: true });
+  avisar(origen === "auto" ? "Grabación iniciada automáticamente" : esNativo ? "Grabación activada. Sigue grabando aunque salgas de la app o entre una llamada." : "Grabación activada", { hablar: true });
 }
 
 async function detenerGrabacion(origen = "manual") {
   if (!grab.grabando) return;
-  await grab.detener();
+  await grab.detener(origen);
   grab.apagarCamara();
   anotar("detencion", origen);
   vibrar([50, 60, 50]);
@@ -189,7 +210,7 @@ function mostrarSello(texto) {
 }
 
 async function proteger(motivo = "Protegido por el conductor", extra = {}, origen = "manual") {
-  const ids = await grab.proteger(motivo, extra);
+  const ids = await grab.proteger(motivo, extra, origen);
   if (!ids.length) {
     const ult = (await db.listarClips()).find((c) => c.tipo === "video" && !c.protegido);
     if (ult) { await db.actualizarClip(ult.id, (c) => { c.protegido = true; c.eventos = [...(c.eventos || []), { t: Date.now(), motivo }]; }); sellarSiCorresponde(await db.obtenerClip(ult.id)); ids.push(ult.id); }
@@ -204,9 +225,9 @@ async function proteger(motivo = "Protegido por el conductor", extra = {}, orige
 
 async function foto(origen = "manual") {
   try {
-    const { meta, blob } = await grab.foto();
+    const { meta, blob } = await grab.foto(origen);
     if (!grab.grabando) { grab.apagarCamara(); pintarRec(); } // no dejar la cámara encendida
-    descargar(blob, nombreArchivo(meta));
+    if (blob) descargar(blob, nombreArchivo(meta));
     vibrar(40);
     anotar("foto", origen);
     avisar("Foto tomada y guardada en la bóveda.", { hablar: true });
@@ -227,6 +248,8 @@ function salirAhorro() {
 
 /* ---------- Copiloto ---------- */
 function encenderVoz() {
+  // En la app Android el copiloto de voz llega en la próxima versión de prueba.
+  if (esNativo) { chip("chipVoz", "apagado", "Voz: próximamente"); return; }
   if (!vozDisponible()) { chip("chipVoz", "mal", "Voz no disponible"); return; }
   voz.iniciar();
 }
@@ -264,6 +287,20 @@ tel.addEventListener("impacto", async (e) => {
   await proteger("Impacto detectado", { g: e.detail.g }, "sistema");
   avisar("Impacto detectado: video protegido. Cuando estés a salvo, abre Videos › «¿Tuviste un choque?».", { tono: "mal" });
 });
+if (esNativo) {
+  // Protegido desde la notificación, la ventana flotante o por un impacto (con la app abierta o al volver).
+  grab.addEventListener("protegido-externo", (e) => {
+    const d = e.detail;
+    const impacto = /Impacto/.test(d.motivo || "");
+    mostrarSello(d.g ? `${d.motivo} · ${d.g.toFixed(2).replace(".", ",")} G` : d.motivo);
+    if (impacto) avisar("Impacto detectado: video protegido. Cuando estés a salvo, abre Videos › «¿Tuviste un choque?».", { tono: "mal" });
+    else avisar("Video protegido en la bóveda.", { hablar: true });
+    pintarEspacio();
+  });
+  grab.addEventListener("llamada", (e) => avisar(e.detail ? "Llamada en curso: el video sigue grabando. El audio vuelve al colgar." : "Llamada terminada: el audio vuelve a grabarse."));
+  grab.addEventListener("registro", () => { clearTimeout(importarRegistro.t); importarRegistro.t = setTimeout(importarRegistro, 800); });
+  grab.addEventListener("estado", () => { pintarRec(); if (!grab.grabando) { salirAhorro(); mantenerPantalla(!!ajustes.autoInicio); pintarEspacio(); } });
+}
 grab.addEventListener("cerrado", (e) => { sellarSiCorresponde(e.detail); pintarEspacio(); if ($("dlgBoveda").open) pintarLista(); });
 grab.addEventListener("fragmento", () => pintarEspacio());
 grab.addEventListener("sin-espacio", () => {
@@ -279,6 +316,16 @@ grab.addEventListener("error", (e) => {
 
 document.addEventListener("visibilitychange", async () => {
   if (document.visibilityState !== "visible") return;
+  if (esNativo) {
+    // Al volver a la app: estado, videos y registro de lo que pasó en segundo plano.
+    await grab.refrescarEstado().catch(() => {});
+    if (grab.grabando && !inicioSesion) inicioSesion = grab.inicio;
+    pintarRec();
+    await sincronizar().catch(() => {});
+    pintarEspacio(); importarRegistro();
+    if ($("dlgBoveda").open) pintarLista();
+    return;
+  }
   if (ajustes.voz && !voz.activa && aceptoTerminos()) encenderVoz();
   if (!grab.grabando) return;
   mantenerPantalla(true);
@@ -298,7 +345,10 @@ $("btnFoto").addEventListener("click", foto);
 $("btnAhorro").addEventListener("click", () => ($("ahorro").hidden ? entrarAhorro() : salirAhorro()));
 $("salirAhorro").addEventListener("dblclick", salirAhorro);
 $("salirAhorro").addEventListener("keydown", (e) => { if (e.key === "Escape" || e.key === "Enter") salirAhorro(); });
-$("btnBoveda").addEventListener("click", () => { pintarLista(); $("dlgBoveda").showModal(); });
+$("btnBoveda").addEventListener("click", async () => {
+  if (esNativo) await sincronizar().catch(() => {});
+  pintarLista(); $("dlgBoveda").showModal();
+});
 $("btnAjustes").addEventListener("click", () => { pintarAjustes(); $("dlgAjustes").showModal(); });
 document.querySelectorAll("[data-cerrar]").forEach((b) => b.addEventListener("click", () => b.closest("dialog").close()));
 
@@ -319,6 +369,14 @@ function descargar(blob, nombre) {
 async function compartir(blob, nombre) { return compartirVarios([{ blob, nombre }]); }
 /** Comparte uno o varios archivos juntos; si el teléfono no puede, los descarga. */
 async function compartirVarios(lista) {
+  if (esNativo) {
+    // En la app: videos por id (sin copiarlos) y archivos generados aquí en base64.
+    const ids = lista.filter((x) => x.id).map((x) => x.id);
+    const datos = await Promise.all(lista.filter((x) => x.blob).map(async ({ blob, nombre }) => ({ nombre, mime: blob.type || "application/octet-stream", base64: await base64DeBlob(blob) })));
+    try { await nativo.compartir({ ids, datos, titulo: lista.length > 1 ? `Grabación PV Car (${lista.length} partes)` : "Compartir desde PV Car" }); }
+    catch (e) { avisar(e.message || "No se pudo compartir.", { tono: "mal" }); }
+    return;
+  }
   const files = lista.map(({ blob, nombre }) => new File([blob], nombre, { type: blob.type }));
   if (navigator.canShare?.({ files })) {
     try { await navigator.share({ files, title: lista.length > 1 ? `Grabación PV Car (${lista.length} partes)` : lista[0].nombre }); return; }
@@ -408,7 +466,7 @@ $("lista").addEventListener("click", async (e) => {
     if (a === "ver") return verSesion(g);
     if (a === "compartir") {
       b.disabled = true; b.querySelector(".lbl").textContent = "Preparando…";
-      try { return await compartirVarios(await Promise.all(g.partes.map(async (p, i) => ({ blob: await db.archivoDe(p), nombre: nombreParte(g, p, i) })))); }
+      try { return await compartirVarios(await Promise.all(g.partes.map(async (p, i) => (esNativo ? { id: p.id, nombre: nombreParte(g, p, i) } : { blob: await db.archivoDe(p), nombre: nombreParte(g, p, i) })))); }
       finally { b.disabled = false; b.querySelector(".lbl").textContent = "Guardar / compartir"; }
     }
     if (a === "proteger") {
@@ -430,7 +488,7 @@ $("lista").addEventListener("click", async (e) => {
   const id = fila.dataset.id;
   const clip = await db.obtenerClip(id); if (!clip) return pintarLista();
   if (a === "ver") return ver(clip);
-  if (a === "compartir") return compartir(await db.archivoDe(clip), nombreArchivo(clip));
+  if (a === "compartir") return esNativo ? compartirVarios([{ id: clip.id, nombre: nombreArchivo(clip) }]) : compartir(await db.archivoDe(clip), nombreArchivo(clip));
   if (a === "acta") return abrirActa(clip);
   if (a === "desproteger" && confirm("Esta parte volverá a la grabación normal y podrá borrarse cuando se llene la memoria. ¿Continuar?")) {
     await db.actualizarClip(id, (c) => { c.protegido = false; });
@@ -451,7 +509,8 @@ function pintarDatos(filas) { $("verDatos").innerHTML = filas.map(([k, v]) => `<
 
 async function ver(clip) {
   limpiarVer();
-  const url = URL.createObjectURL(await db.archivoDe(clip)); urlsVer.push(url);
+  const url = clip.url || URL.createObjectURL(await db.archivoDe(clip));
+  if (!clip.url) urlsVer.push(url);
   $("tVer").textContent = fechaHora(new Date(clip.inicio));
   $("verMedio").innerHTML = clip.tipo === "foto" ? `<img src="${url}" alt="Foto tomada el ${esc(fechaHora(new Date(clip.inicio)))}">` : `<video src="${url}" controls playsinline></video>`;
   const r = resumen([clip]);
@@ -472,7 +531,14 @@ async function verSesion(g) {
   video.controls = true; video.playsInline = true; video.preload = "auto";
   $("verMedio").append(video);
   const urls = [];
-  const url = async (i) => { if (!urls[i]) { urls[i] = URL.createObjectURL(await db.archivoDe(g.partes[i])); urlsVer.push(urls[i]); } return urls[i]; };
+  const url = async (i) => {
+    if (!urls[i]) {
+      const p = g.partes[i];
+      urls[i] = p.url || URL.createObjectURL(await db.archivoDe(p));
+      if (!p.url) urlsVer.push(urls[i]);
+    }
+    return urls[i];
+  };
   let actual = 0;
   const cargar = async (i, reproducir) => {
     actual = i;
@@ -536,7 +602,7 @@ $("formActa").addEventListener("submit", async (e) => {
   try {
     ajustes.nombre = $("aNombre").value.trim(); ajustes.documento = $("aDoc").value.trim(); guardarAjustes();
     const clip = await db.obtenerClip(clipActa.id);
-    const archivo = await db.archivoDe(clip);
+    const archivo = clip.url || await db.archivoDe(clip);
     const ev = clip.eventos?.[0];
     const seg = ev && clip.tipo === "video" ? Math.max(0.5, (ev.t - clip.inicio) / 1000) : 1;
     const fotograma = await fotogramaDeArchivo(archivo, clip, seg);
@@ -560,10 +626,13 @@ async function pintarAjustes() {
   $("vozOn").checked = ajustes.voz; $("ttsOn").checked = ajustes.tts; $("audioOn").checked = ajustes.audio; $("placa").value = ajustes.placa;
   $("autoOn").checked = ajustes.autoInicio; $("autoUmbral").value = String(ajustes.autoUmbral); $("autoParada").value = String(ajustes.autoParada);
   $("autoUmbral").disabled = $("autoParada").disabled = !ajustes.autoInicio; $("vibrarOn").checked = ajustes.vibrar;
-  $("vozAyuda").textContent = vozDisponible()
+  $("vozAyuda").textContent = esNativo
+    ? "En la app Android el copiloto de voz llega en la próxima versión de prueba. Mientras tanto usa los botones, la notificación o la ventana flotante."
+    : vozDisponible()
     ? "El reconocimiento lo hace el sistema del teléfono. En Android, descarga el paquete de voz en español para que funcione sin datos."
     : "Este navegador no ofrece reconocimiento de voz. En Android usa Chrome; en iPhone, Safari 14.5 o superior.";
   pintarCuota();
+  if (esNativo) return pintarAjustesNativos();
   try {
     const est = await navigator.storage?.estimate?.();
     if (est) {
@@ -573,6 +642,24 @@ async function pintarAjustes() {
     }
   } catch {}
 }
+async function pintarAjustesNativos() {
+  $("dispTxt").textContent = "Los videos se guardan en la memoria del teléfono, en la carpeta privada de PV Car: no aparecen en la galería y se borran si desinstalas la app.";
+  $("ajustesNativo").hidden = false;
+  try {
+    const p = await nativo.permisos();
+    const v = await nativo.disponible();
+    const falta = [p.camara !== "granted" && "cámara", p.ubicacion !== "granted" && "ubicación", p.notificaciones !== "granted" && "notificaciones"].filter(Boolean);
+    $("nativoPermisos").textContent = falta.length ? `Falta permiso de ${falta.join(", ")}. Se pide al tocar Grabar; si lo negaste, actívalo en Ajustes › Apps › PV Car › Permisos.` : "Permisos de cámara, ubicación y notificaciones concedidos.";
+    $("nativoBateria").textContent = p.bateriaLibre ? "Sin restricción de batería: Android no detendrá la grabación para ahorrar energía." : "Algunos teléfonos (Xiaomi, Samsung, Huawei, Oppo) detienen las apps en segundo plano para ahorrar batería. Permite que PV Car funcione sin restricciones:";
+    $("nativoSinRestriccion").hidden = !!p.bateriaLibre;
+    $("nativoVersion").textContent = `App Android, versión ${v.version}`;
+  } catch {}
+}
+if (esNativo) $("nativoSinRestriccion").addEventListener("click", async () => {
+  await nativo.pedirSinRestriccionBateria().catch(() => {});
+  setTimeout(pintarAjustesNativos, 1500);
+});
+
 function pintarCuota() {
   const gb = Number($("cuota").value);
   const f = $("formAjustes");
@@ -673,7 +760,7 @@ function pintarRegistro() {
   $("registroLista").innerHTML = lista.slice(0, 200).map((e) => `<li class="${e.tipo === "impacto" ? "imp" : ""}"><time>${esc(fechaHora(new Date(e.t)))}</time><span>${esc(TIPOS[e.tipo] || e.tipo)}</span><small>${esc([ORIGENES[e.origen] || e.origen, e.detalle].filter(Boolean).join(" · "))}</small></li>`).join("");
   $("registroExportar").disabled = $("registroBorrar").disabled = !lista.length;
 }
-$("abrirRegistro").addEventListener("click", () => { $("dlgAjustes").close(); pintarRegistro(); $("dlgRegistro").showModal(); });
+$("abrirRegistro").addEventListener("click", async () => { $("dlgAjustes").close(); await importarRegistro(); pintarRegistro(); $("dlgRegistro").showModal(); });
 $("registroExportar").addEventListener("click", () => {
   const blob = new Blob([registro.csv((t) => fechaHora(new Date(t)))], { type: "text/csv;charset=utf-8" });
   compartir(blob, `PVCar_registro_${fechaHora().slice(0, 10)}.csv`);
@@ -701,20 +788,27 @@ setInterval(revisarAuto, 15000); // el GPS deja de avisar cuando el carro está 
 
 (async function arrancar() {
   pintarRec();
-  if ("serviceWorker" in navigator && location.protocol !== "file:") navigator.serviceWorker.register("sw.js").catch(() => {});
-  try { await navigator.storage?.persist?.(); } catch {}
-  try {
-    const n = await recuperarHuerfanos();
-    if (n) avisar(`Se recuperaron ${n} clip(s) tras un cierre inesperado.`);
-  } catch (err) {
-    avisar(`No se pudo abrir el almacenamiento local (${err.message}). ¿Navegación privada?`, { tono: "mal" });
+  if (esNativo) {
+    // Los videos los guarda el servicio nativo; aquí solo se traen sus fichas.
+    try { await grab.refrescarEstado(); if (grab.grabando) inicioSesion = grab.inicio; pintarRec(); } catch {}
+    try { await sincronizar(); } catch (err) { avisar(`No se pudieron leer los videos (${err.message}).`, { tono: "mal" }); }
+    importarRegistro();
+  } else {
+    if ("serviceWorker" in navigator && location.protocol !== "file:") navigator.serviceWorker.register("sw.js").catch(() => {});
+    try { await navigator.storage?.persist?.(); } catch {}
+    try {
+      const n = await recuperarHuerfanos();
+      if (n) avisar(`Se recuperaron ${n} clip(s) tras un cierre inesperado.`);
+    } catch (err) {
+      avisar(`No se pudo abrir el almacenamiento local (${err.message}). ¿Navegación privada?`, { tono: "mal" });
+    }
   }
   // Sella las evidencias que hayan quedado sin huella.
   for (const c of await db.listarClips().catch(() => [])) sellarSiCorresponde(c);
   pintarEspacio();
   if (!aceptoTerminos()) abrirGuia(0);
   else configurarAuto();
-  if (aceptoTerminos() && ajustes.voz) {
+  if (aceptoTerminos() && ajustes.voz && !esNativo) {
     // Algunos navegadores solo permiten el micrófono tras un toque.
     document.addEventListener("pointerdown", () => encenderVoz(), { once: true });
   }

@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">PV Car</string>
+    <string name="title_activity_main">PV Car</string>
+    <string name="package_name">lat.pascalia.pvcar</string>
+    <string name="custom_url_scheme">lat.pascalia.pvcar</string>
+</resources>

@@ -1,0 +1,62 @@
+name: App Android (APK de prueba)
+
+on:
+  push:
+    branches: [main, "ccr-*"]
+    paths:
+      - "android/**"
+      - "js/**"
+      - "index.html"
+      - "app.css"
+      - "img/**"
+      - "icons/**"
+      - "package.json"
+      - "package-lock.json"
+      - "capacitor.config.json"
+      - "scripts/**"
+      - ".github/workflows/android.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: gradle
+      - name: Pruebas de la lógica
+        run: npm ci && npm test
+      - name: Copiar la interfaz web al proyecto Android
+        run: ./scripts/web-nativa.sh && npx cap sync android
+      - name: Compilar el APK
+        working-directory: android
+        run: chmod +x gradlew && ./gradlew assembleDebug --stacktrace --no-daemon
+      - name: Preparar el archivo
+        run: cp android/app/build/outputs/apk/debug/app-debug.apk PVCar-prueba.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PVCar-prueba
+          path: PVCar-prueba.apk
+      - name: Publicar en Versiones (descarga directa desde el teléfono)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete prueba-android --yes --cleanup-tag || true
+          gh release create prueba-android PVCar-prueba.apk \
+            --target "$GITHUB_SHA" --prerelease \
+            --title "PV Car para Android · versión de prueba" \
+            --notes "APK de prueba (no es de Google Play). Compilado desde ${GITHUB_REF_NAME} (${GITHUB_SHA::7}), ejecución ${GITHUB_RUN_NUMBER}. Instálalo en Android 7 o superior: abre el archivo y permite «Instalar apps desconocidas». Las versiones nuevas se instalan encima sin borrar tus videos."

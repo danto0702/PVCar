@@ -9,6 +9,10 @@
 // Funciona igual en la página y en el worker que calcula el hash.
 
 const NOMBRE = "pbcar_loop";
+// En la app Android los videos son archivos del servicio nativo (js/nativo.js):
+// los cambios en sus fichas se le avisan para que el bucle los respete.
+let gancho = null;
+export function ganchoNativo(g) { gancho = g; }
 const VERSION = 1;
 let conexion = null;
 
@@ -64,6 +68,7 @@ export async function actualizarClip(id, fn) {
   fn(clip);
   st.put(clip);
   await hecho(tx);
+  if (clip.nativo && gancho) await gancho.actualizar(clip);
   return clip;
 }
 
@@ -102,12 +107,21 @@ export async function* recorrerPartes(clipId) {
 
 /** Reconstruye el archivo completo (el navegador lo deja en disco, no en RAM). */
 export async function archivoDe(clip) {
+  if (clip.url) { // archivo del servicio nativo
+    const r = await fetch(clip.url);
+    if (!r.ok) throw new Error(`No se pudo leer el archivo (${r.status})`);
+    return new Blob([await r.blob()], { type: clip.mime || "video/mp4" });
+  }
   const trozos = [];
   for await (const b of recorrerPartes(clip.id)) trozos.push(b);
   return new Blob(trozos, { type: clip.mime || "video/webm" });
 }
 
-export async function borrarClip(id) {
+export async function borrarClip(id, { soloLocal = false } = {}) {
+  if (gancho && !soloLocal) {
+    const c = await obtenerClip(id);
+    if (c?.nativo) await gancho.borrar(id);
+  }
   const db = await abrir();
   const tx = db.transaction(["partes", "clips"], "readwrite");
   tx.objectStore("partes").delete(rango(id));

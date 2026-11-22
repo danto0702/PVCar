@@ -10,8 +10,10 @@ export const TIPOS = {
   foto: "Foto tomada",
   acta: "Acta PDF generada",
   sinEspacio: "Sin espacio: grabación detenida",
+  llamada: "Llamada: el video sigue, audio en pausa",
+  finLlamada: "Llamada terminada",
 };
-export const ORIGENES = { manual: "botón", voz: "voz", auto: "automático", sistema: "sistema" };
+export const ORIGENES = { manual: "botón", voz: "voz", auto: "automático", sistema: "sistema", notificacion: "notificación", ventana: "ventana flotante" };
 
 export class Registro {
   constructor(almacen, { clave = "pvcar_registro", max = 500 } = {}) {
@@ -27,6 +29,8 @@ export class Registro {
     const ev = { t, tipo, ...(origen ? { origen } : {}), ...(detalle ? { detalle } : {}) };
     const lista = this.listar();
     lista.push(ev);
+    // Los eventos del servicio de la app Android llegan después: se ordenan por hora.
+    if (lista.length > 1 && lista[lista.length - 2].t > t) lista.sort((a, b) => a.t - b.t);
     const recortada = lista.slice(-this.max);
     try { this.almacen.setItem(this.clave, JSON.stringify(recortada)); } catch {}
     return ev;

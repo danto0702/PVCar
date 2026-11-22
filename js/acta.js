@@ -16,7 +16,9 @@ async function jpegDe(canvas, calidad = 0.85) {
 
 /** Extrae un fotograma del archivo (o devuelve la foto). Null si no se puede. */
 export async function fotogramaDeArchivo(archivo, clip, segundo = 1) {
-  const url = URL.createObjectURL(archivo);
+  // `archivo` es un Blob o, en la app Android, la URL del archivo nativo.
+  const propia = typeof archivo !== "string";
+  const url = propia ? URL.createObjectURL(archivo) : archivo;
   try {
     const img = clip.tipo === "foto" ? new Image() : document.createElement("video");
     const listo = new Promise((ok, mal) => {
@@ -37,7 +39,7 @@ export async function fotogramaDeArchivo(archivo, clip, segundo = 1) {
     c.width = Math.round(w * esc); c.height = Math.round(h * esc);
     c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
     return c;
-  } catch { return null; } finally { URL.revokeObjectURL(url); }
+  } catch { return null; } finally { if (propia) URL.revokeObjectURL(url); }
 }
 
 export function nombreArchivo(clip) {

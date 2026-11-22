@@ -1,0 +1,8 @@
+{
+  "appId": "lat.pascalia.pvcar",
+  "appName": "PV Car",
+  "webDir": "www",
+  "android": {
+    "backgroundColor": "#00000000"
+  }
+}

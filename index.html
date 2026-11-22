@@ -218,6 +218,15 @@
         <label class="interruptor"><input type="checkbox" id="vibrarOn"><span>Vibrar al iniciar, detener y proteger</span></label>
       </fieldset>
 
+      <fieldset id="ajustesNativo" hidden>
+        <legend>App Android</legend>
+        <p class="ayuda">PV Car sigue grabando con la app en segundo plano, con la pantalla apagada o durante una llamada. Mientras graba verás una notificación fija con los botones <b>Proteger</b> y <b>Detener</b>; al salir de la app queda una ventana flotante con la cámara. Si cierras esa ventana, la grabación continúa.</p>
+        <p class="ayuda" id="nativoPermisos"></p>
+        <p class="ayuda" id="nativoBateria"></p>
+        <button type="button" class="boton sec" id="nativoSinRestriccion" hidden>Permitir sin restricción de batería</button>
+        <p class="ayuda" id="nativoVersion"></p>
+      </fieldset>
+
       <fieldset>
         <legend>Ayuda</legend>
         <div class="botones-ayuda">

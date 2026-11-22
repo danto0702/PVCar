@@ -411,3 +411,7 @@ dialog.guia .guia-pie .acciones { flex-wrap: nowrap; justify-content: stretch; g
 dialog.guia .guia-pie .acciones .boton:not(.sec) { flex: 1; }
 /* En celulares altos la imagen crece (cuadrada) y llena mejor la pantalla */
 @media (max-width: 699px) and (min-height: 760px) { dialog.guia .guia-img { aspect-ratio: 1 / 1; } }
+
+/* App Android: la cámara nativa se ve detrás de la interfaz (la vista web es transparente). */
+html.nativo, html.nativo body, html.nativo .visor { background: transparent; }
+html.nativo #lienzo, html.nativo #video { display: none; }

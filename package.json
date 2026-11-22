@@ -4,7 +4,14 @@
   "type": "module",
   "description": "PV Car · Pascal Video Car — dashcam en bucle, copiloto por voz y bóveda forense (PWA)",
   "scripts": {
-    "test": "node --test tests/",
+    "test": "node --test tests/*.mjs",
     "start": "python3 -m http.server 8080"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.6.2",
+    "@capacitor/core": "^8.6.2"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.6.2"
   }
 }
