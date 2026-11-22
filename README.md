@@ -60,6 +60,36 @@ sw.js, manifest         instalación y funcionamiento sin conexión
 tests/                  pruebas con node:test
 ```
 
+## App Android (grabación en segundo plano)
+
+La versión web no puede grabar con la app en segundo plano: el navegador pausa la cámara
+al recibir una llamada, abrir otra app o bloquear la pantalla. La app Android lo resuelve
+con un **servicio en primer plano** (`android/app/src/main/java/lat/pascalia/pvcar/`):
+
+- `GrabacionService.kt`: graba en bucle con CameraX; sigue con otra app abierta, la
+  pantalla apagada o durante una llamada (el video sigue; Android silencia el micrófono
+  hasta colgar). La telemetría se dibuja dentro de cada cuadro (`OverlayEffect`).
+  Cuota FIFO, protección por impacto, huella SHA-256 y fotos.
+- Notificación fija con **Proteger** y **Detener**; al salir de la app, ventana flotante
+  (imagen en imagen) con los mismos botones. Si se cierra, la grabación continúa.
+- `MainActivity.kt`: la interfaz web va encima de la vista de cámara nativa.
+- `PVNativoPlugin.kt` ⇄ `js/nativo.js`: la misma interfaz web controla el servicio;
+  Videos, bóveda, acta y registro leen los archivos del servicio.
+- En iPhone esto no es posible: iOS no permite usar la cámara en segundo plano.
+
+**APK de prueba:** cada push compila el APK en GitHub Actions (`.github/workflows/android.yml`)
+y lo publica en [Versiones › prueba-android](https://github.com/danto0702/PVCar/releases/tag/prueba-android).
+Las versiones de prueba se firman con `android/app/prueba.keystore` (llave pública de
+prueba, contraseña `android`) para que cada APK se instale encima del anterior. La versión
+de Google Play debe firmarse con otra llave privada fuera del repositorio.
+
+Compilar localmente (requiere Android SDK y JDK 21):
+
+```bash
+npm ci && ./scripts/web-nativa.sh && npx cap sync android
+cd android && ./gradlew assembleDebug
+```
+
 ## Límites conocidos de la versión web
 
 - **Pantalla encendida y app al frente.** Los navegadores detienen la cámara si se bloquea el teléfono
