@@ -237,11 +237,13 @@ async function foto(origen = "manual") {
 }
 
 function entrarAhorro() {
+  if (esNativo) nativo.vistaPrevia(false).catch(() => {}); // la vista previa también calienta
   $("ahorro").hidden = false;
   $("btnAhorro").setAttribute("aria-pressed", "true");
   $("salirAhorro").focus();
 }
 function salirAhorro() {
+  if (esNativo && !$("ahorro").hidden) nativo.vistaPrevia(true).catch(() => {});
   $("ahorro").hidden = true;
   $("btnAhorro").setAttribute("aria-pressed", "false");
 }
@@ -296,6 +298,19 @@ if (esNativo) {
     if (impacto) avisar("Impacto detectado: video protegido. Cuando estés a salvo, abre Videos › «¿Tuviste un choque?».", { tono: "mal" });
     else avisar("Video protegido en la bóveda.", { hablar: true });
     pintarEspacio();
+  });
+  // Temperatura: indicador siempre visible mientras graba, y avisos al cambiar de nivel.
+  grab.addEventListener("temperatura", (e) => pintarTemp(e.detail));
+  grab.addEventListener("termico", (e) => {
+    const t = e.detail;
+    pintarTemp(t);
+    const grados = t.temp != null ? ` (${Math.round(t.temp)} °C)` : "";
+    if (t.pausa) avisar(`El teléfono está muy caliente${grados}. PV Car guardó el video y pausó la cámara; retoma sola al enfriarse. Quítalo del sol directo.`, { tono: "mal", hablar: true });
+    else if (t.nivel >= 2) avisar(`Teléfono caliente${grados}: graba en 720p a 24 cuadros y apagué la vista previa. Sigue grabando; puedes apagar la pantalla.`, { tono: "alerta", hablar: true });
+    else if (t.nivel === 1) avisar(`Teléfono tibio${grados}: bajé un poco la calidad para enfriarlo.${t.cargando ? " Si usas carga rápida, cámbiala por un cargador lento." : ""}`, { tono: "alerta" });
+    else avisar("Temperatura normal: calidad completa de nuevo.");
+    // Con calor la pantalla puede apagarse sola: la grabación sigue en segundo plano.
+    mantenerPantalla(t.nivel === 0 && grab.grabando);
   });
   grab.addEventListener("llamada", (e) => avisar(e.detail ? "Llamada en curso: el video sigue grabando. El audio vuelve al colgar." : "Llamada terminada: el audio vuelve a grabarse."));
   grab.addEventListener("registro", () => { clearTimeout(importarRegistro.t); importarRegistro.t = setTimeout(importarRegistro, 800); });
@@ -642,6 +657,15 @@ async function pintarAjustes() {
     }
   } catch {}
 }
+function pintarTemp(t) {
+  const c = $("chipTemp");
+  if (!esNativo || !t || t.temp == null) { c.hidden = true; return; }
+  c.hidden = !grab.grabando && !t.nivel;
+  const tono = t.pausa || t.nivel >= 3 ? "mal" : t.nivel >= 1 ? "alerta" : "ok";
+  chip("chipTemp", tono, `${Math.round(t.temp)} °C`);
+  c.title = t.pausa ? "Pausa por temperatura" : t.nivel ? `Calor: ${t.perfil} a ${t.fps} cuadros` : "Temperatura normal";
+}
+
 async function pintarAjustesNativos() {
   $("dispTxt").textContent = "Los videos se guardan en la memoria del teléfono, en la carpeta privada de PV Car: no aparecen en la galería y se borran si desinstalas la app.";
   $("ajustesNativo").hidden = false;
@@ -652,6 +676,9 @@ async function pintarAjustesNativos() {
     $("nativoPermisos").textContent = falta.length ? `Falta permiso de ${falta.join(", ")}. Se pide al tocar Grabar; si lo negaste, actívalo en Ajustes › Apps › PV Car › Permisos.` : "Permisos de cámara, ubicación y notificaciones concedidos.";
     $("nativoBateria").textContent = p.bateriaLibre ? "Sin restricción de batería: Android no detendrá la grabación para ahorrar energía." : "Algunos teléfonos (Xiaomi, Samsung, Huawei, Oppo) detienen las apps en segundo plano para ahorrar batería. Permite que PV Car funcione sin restricciones:";
     $("nativoSinRestriccion").hidden = !!p.bateriaLibre;
+    const est = await nativo.estado();
+    const t = est.termico;
+    $("nativoTemp").textContent = t && t.temp != null ? `Temperatura del teléfono: ${Math.round(t.temp)} °C${t.nivel ? (t.pausa ? " · en pausa por calor" : ` · calidad reducida (${t.perfil} a ${t.fps} cuadros)`) : " · normal"}.` : "";
     $("nativoVersion").textContent = `App Android, versión ${v.version}`;
   } catch {}
 }

@@ -124,6 +124,13 @@ class PVNativoPlugin : Plugin() {
         }
     }
 
+    /** Modo ahorro: apaga la vista previa (menos calor y batería); la grabación sigue. */
+    @PluginMethod
+    fun vistaPrevia(call: PluginCall) {
+        val activa = call.getBoolean("activa", true) == true
+        main.post { GrabacionService.instancia?.apagarVista(!activa); call.resolve() }
+    }
+
     @PluginMethod
     fun configurar(call: PluginCall) {
         val a = Ajustes.de(call.getObject("ajustes"))

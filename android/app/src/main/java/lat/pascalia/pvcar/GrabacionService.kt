@@ -25,6 +25,7 @@ import android.os.PowerManager
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.util.Log
+import android.util.Range
 import android.view.OrientationEventListener
 import android.view.Surface
 import androidx.camera.core.CameraEffect
@@ -112,6 +113,11 @@ class GrabacionService : LifecycleService() {
     private var orientacion: OrientationEventListener? = null
     @Volatile private var rotacion = Surface.ROTATION_90
     private var detenerPedido = false
+    lateinit var termico: Termico; private set
+    @Volatile var pausaTermica = false; private set
+    @Volatile private var nivelAplicado = 0
+    private var vistaApagada = false
+    private var ultimoCambioTermico = 0L
 
     /* ---------------- Ciclo de vida ---------------- */
 
@@ -120,6 +126,7 @@ class GrabacionService : LifecycleService() {
         instancia = this
         almacen = Almacen(this)
         tel = Telemetria(this) { g -> main.post { impacto(g) } }
+        termico = Termico(this) { n -> main.post { alCambiarTermico(n) } }
         hiloEfecto = HandlerThread("pvcar-telemetria").also { it.start() }
         crearCanales()
         trabajo.execute { almacen.recuperarHuerfanos(null) }
@@ -150,7 +157,15 @@ class GrabacionService : LifecycleService() {
     /** La interfaz conecta aquí la vista previa de la actividad (o null al salir). */
     fun conectarVista(v: PreviewView?) {
         vista = v
-        preview?.surfaceProvider = v?.surfaceProvider
+        preview?.surfaceProvider = if (vistaActiva()) v?.surfaceProvider else null
+    }
+
+    /** La vista previa también calienta (GPU y pantalla): se apaga en modo ahorro o con calor. */
+    private fun vistaActiva() = !vistaApagada && nivelAplicado < 2
+
+    fun apagarVista(si: Boolean) {
+        vistaApagada = si
+        conectarVista(vista)
     }
 
     fun configurar(a: Ajustes) {
@@ -192,6 +207,9 @@ class GrabacionService : LifecycleService() {
         inicioSesion = System.currentTimeMillis()
         sesion = "s$inicioSesion"
         tel.iniciar()
+        termico.iniciar()
+        pausaTermica = false
+        nivelAplicado = minOf(termico.nivel, 2)
         bloqueo = (getSystemService(Context.POWER_SERVICE) as PowerManager)
             .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "pvcar:grabacion").also { it.acquire(12 * 60 * 60 * 1000L) }
         vigilarOrientacion(true)
@@ -199,8 +217,8 @@ class GrabacionService : LifecycleService() {
         ProcessCameraProvider.getInstance(this).addListener({
             try {
                 proveedor = ProcessCameraProvider.getInstance(this).get()
-                vincular()
-                abrirFragmento(false)
+                if (termico.nivel >= 3) pausarPorCalor()
+                else { vincular(); abrirFragmento(false) }
             } catch (e: Exception) {
                 Log.e(TAG, "No se pudo abrir la cámara", e)
                 Bus.emitir("error", JSONObject().put("mensaje", "No se pudo abrir la cámara: ${e.message}"))
@@ -220,6 +238,8 @@ class GrabacionService : LifecycleService() {
         grabacion = null
         g?.stop() // el cierre de la ficha llega en el evento Finalize
         tel.detener()
+        termico.detener()
+        pausaTermica = false
         vigilarOrientacion(false)
         anotar("detencion", origen, null)
         vibrar(longArrayOf(0, 50, 60, 50))
@@ -240,12 +260,13 @@ class GrabacionService : LifecycleService() {
 
     private fun vincular() {
         val p = proveedor ?: return
-        val calidad = when (ajustes.resolucion) { "720p" -> Quality.HD; "4k" -> Quality.UHD; else -> Quality.FHD }
-        val selector = QualitySelector.from(calidad, FallbackStrategy.lowerQualityOrHigherThan(calidad))
-        val recorder = Recorder.Builder().setQualitySelector(selector).setTargetVideoEncodingBitRate(ajustes.bps).build()
-        val cap = VideoCapture.Builder(recorder).setTargetRotation(rotacion).build()
-        val pre = Preview.Builder().setTargetRotation(rotacion).build()
-        (vista ?: MainActivity.vista?.get())?.let { vista = it; pre.surfaceProvider = it.surfaceProvider }
+        val pf = perfil(nivelAplicado)
+        val selector = QualitySelector.from(pf.calidad, FallbackStrategy.lowerQualityOrHigherThan(pf.calidad))
+        val recorder = Recorder.Builder().setQualitySelector(selector).setTargetVideoEncodingBitRate(pf.bps).build()
+        val cuadros = Range(pf.fps, pf.fps)
+        val cap = VideoCapture.Builder(recorder).setTargetRotation(rotacion).setTargetFrameRate(cuadros).build()
+        val pre = Preview.Builder().setTargetRotation(rotacion).setTargetFrameRate(cuadros).build()
+        (vista ?: MainActivity.vista?.get())?.let { vista = it; if (vistaActiva()) pre.surfaceProvider = it.surfaceProvider }
         // La telemetría se dibuja dentro de cada cuadro del video (marca de agua probatoria).
         val ef = OverlayEffect(CameraEffect.VIDEO_CAPTURE, 0, Handler(hiloEfecto.looper)) { t -> Log.e(TAG, "Error en la superposición", t) }
         ef.setOnDrawListener { frame -> dibujar(frame) }
@@ -275,11 +296,11 @@ class GrabacionService : LifecycleService() {
         val id = "v$inicio"
         val archivo = almacen.video(id)
         val vertical = rotacion == Surface.ROTATION_0 || rotacion == Surface.ROTATION_180
-        val (ancho, alto) = when (ajustes.resolucion) { "720p" -> 1280 to 720; "4k" -> 3840 to 2160; else -> 1920 to 1080 }
+        val (ancho, alto) = when (perfil(nivelAplicado).etiqueta) { "720p" -> 1280 to 720; "4k" -> 3840 to 2160; else -> 1920 to 1080 }
         val ficha = JSONObject()
             .put("id", id).put("tipo", "video").put("inicio", inicio).put("fin", JSONObject.NULL)
             .put("bytes", 0).put("partes", 1).put("mime", "video/mp4")
-            .put("resolucion", ajustes.resolucion)
+            .put("resolucion", perfil(nivelAplicado).etiqueta)
             .put("ancho", if (vertical) alto else ancho).put("alto", if (vertical) ancho else alto)
             .put("protegido", protegerDesdeInicio).put("estado", "grabando")
             .put("eventos", JSONArray().apply { if (protegerDesdeInicio) put(JSONObject().put("t", inicio).put("motivo", "Continuación de un evento en curso")) })
@@ -431,8 +452,10 @@ class GrabacionService : LifecycleService() {
                 if (System.currentTimeMillis() - f.optLong("inicio") >= ajustes.minutos * 60_000L) rotar()
             }
             revisarLlamada()
+            // Tras una pausa por calor se graba en 720p; si el teléfono sigue fresco 5 min, se recupera la calidad.
+            if (!pausaTermica && termico.nivel < nivelAplicado && System.currentTimeMillis() - ultimoCambioTermico > 300_000) cambiarPerfil(termico.nivel)
             superposicionSucia = true
-            Bus.emitir("telemetria", tel.estado().put("grabando", true).put("inicio", inicioSesion).put("protegido", actual?.optBoolean("protegido") == true).put("llamada", enLlamada))
+            Bus.emitir("telemetria", tel.estado().put("grabando", true).put("inicio", inicioSesion).put("protegido", actual?.optBoolean("protegido") == true).put("llamada", enLlamada).put("termico", termicoJson()))
             if (segundos % 15 == 0) actualizarNotificacion()
             main.postDelayed(this, 1000)
         }
@@ -496,7 +519,8 @@ class GrabacionService : LifecycleService() {
         val gp = tel.gPico
         val vel = tel.velKmh?.let { "${it.roundToInt()} km/h" } ?: "-- km/h"
         val placa = if (ajustes.placa.isNotBlank()) "  ${ajustes.placa.uppercase()}" else ""
-        val estado = when { enLlamada -> "● REC · LLAMADA (SIN AUDIO)"; prot -> "● REC · BÓVEDA"; else -> "● REC" }
+        val calor = if (nivelAplicado >= 1) " · CALOR ${perfil(nivelAplicado).etiqueta}" else ""
+        val estado = when { enLlamada -> "● REC · LLAMADA (SIN AUDIO)$calor"; prot -> "● REC · BÓVEDA$calor"; else -> "● REC$calor" }
         val pares = listOf(
             Texto(SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date()), grande, Color.WHITE, true) to Texto(String.format(Locale.US, "%s  %.2f G", vel, gp), grande, if (gp >= tel.umbral) 0xFFFF5252.toInt() else 0xFFFFC107.toInt(), true),
             Texto("${coordenadas(tel.lat, tel.lon)}$placa", chica, 0xFFF4F1EA.toInt(), false) to Texto(estado, chica, if (prot || enLlamada) 0xFFFFC107.toInt() else 0xFFFF6B6B.toInt(), false),
@@ -587,8 +611,10 @@ class GrabacionService : LifecycleService() {
 
     private fun notificacion(): Notification {
         val prot = actual?.optBoolean("protegido") == true
-        val titulo = when { prot -> "PV Car protegiendo en la bóveda"; else -> "PV Car está grabando" }
+        val titulo = when { pausaTermica -> "PV Car en pausa por temperatura"; prot -> "PV Car protegiendo en la bóveda"; else -> "PV Car está grabando" }
         val partes = mutableListOf<String>()
+        if (pausaTermica) partes.add("Retoma sola al enfriarse")
+        else if (nivelAplicado >= 1) partes.add("Calor: ${perfil(nivelAplicado).etiqueta} a ${perfil(nivelAplicado).fps} cuadros")
         if (enLlamada) partes.add("Llamada: el video sigue, audio en pausa")
         tel.velKmh?.let { partes.add("${it.roundToInt()} km/h") }
         if (tel.gps == "sin permiso") partes.add("sin GPS")
@@ -652,7 +678,101 @@ class GrabacionService : LifecycleService() {
         .put("protegido", actual?.optBoolean("protegido") == true)
         .put("clipActual", actual?.optString("id") ?: JSONObject.NULL)
         .put("llamada", enLlamada)
+        .put("termico", termicoJson())
         .put("telemetria", tel.estado())
+
+    private fun termicoJson(): JSONObject = termico.json()
+        .put("pausa", pausaTermica).put("perfil", perfil(nivelAplicado).etiqueta).put("fps", perfil(nivelAplicado).fps)
+        .put("vistaApagada", !vistaActiva())
+
+    /* ---------------- Protección térmica ---------------- */
+
+    private data class Perfil(val calidad: Quality, val etiqueta: String, val bps: Int, val fps: Int)
+
+    /** Calidad según el calor: menos bits primero, luego 720p a 24 cuadros. */
+    private fun perfil(nivel: Int): Perfil {
+        val base = when (ajustes.resolucion) {
+            "720p" -> Perfil(Quality.HD, "720p", ajustes.bps, 30)
+            "4k" -> Perfil(Quality.UHD, "4k", ajustes.bps, 30)
+            else -> Perfil(Quality.FHD, "1080p", ajustes.bps, 30)
+        }
+        return when {
+            nivel <= 0 -> base
+            nivel == 1 -> if (base.etiqueta == "4k") Perfil(Quality.FHD, "1080p", 6_000_000, 30) else base.copy(bps = (base.bps * 0.6).toInt())
+            else -> Perfil(Quality.HD, "720p", 2_500_000, 24)
+        }
+    }
+
+    private fun textoTemp(): String = termico.tempBateria?.let { String.format(Locale.US, "%.0f °C", it) } ?: "temperatura alta"
+
+    private fun alCambiarTermico(n: Int) {
+        if (!activa) return
+        superposicionSucia = true
+        Bus.emitir("termico", termicoJson())
+        when {
+            n >= 3 && !pausaTermica -> pausarPorCalor()
+            pausaTermica && n <= 2 -> reanudarTrasCalor()
+            !pausaTermica && minOf(n, 2) != nivelAplicado -> cambiarPerfil(minOf(n, 2))
+        }
+        actualizarNotificacion()
+    }
+
+    /** Guarda el fragmento en curso y deja `actual` en null para que su cierre no cuente como corte. */
+    private fun soltarFragmento(): JSONObject? {
+        val f = actual ?: return null
+        val g = grabacion
+        grabacion = null
+        actual = null
+        almacen.actualizar(f.optString("id")) { c -> c.put("telemetria", f.optJSONArray("telemetria")); c.put("eventos", f.optJSONArray("eventos")); c.put("protegido", f.optBoolean("protegido")) }
+        g?.stop()
+        return f
+    }
+
+    private fun cambiarPerfil(n: Int) {
+        nivelAplicado = n
+        ultimoCambioTermico = System.currentTimeMillis()
+        val pf = perfil(n)
+        val motivo = if (n == 0) "Temperatura normal: calidad completa" else "Temperatura alta (${textoTemp()}): ${pf.etiqueta} a ${pf.fps} cuadros"
+        actual?.let { Almacen.agregarEvento(it, JSONObject().put("t", System.currentTimeMillis()).put("motivo", motivo)) }
+        anotar("termico", "sistema", motivo)
+        val f = soltarFragmento()
+        val seguir = f?.optBoolean("protegido") == true
+        // Se reconfigura la cámara con la nueva calidad; el hueco es de alrededor de un segundo.
+        main.postDelayed({ if (activa && !pausaTermica) { runCatching { vincular() }; if (actual == null) abrirFragmento(seguir) } }, 900)
+        conectarVista(vista)
+    }
+
+    private fun pausarPorCalor() {
+        pausaTermica = true
+        val motivo = "Pausa por temperatura (${textoTemp()}): video guardado"
+        actual?.let { Almacen.agregarEvento(it, JSONObject().put("t", System.currentTimeMillis()).put("motivo", motivo)) }
+        anotar("termico", "sistema", motivo)
+        soltarFragmento()
+        main.postDelayed({
+            if (pausaTermica) {
+                runCatching { proveedor?.unbindAll() }
+                runCatching { efecto?.close() }
+                efecto = null; captura = null; preview = null
+            }
+        }, 1200)
+        vibrar(longArrayOf(0, 300, 120, 300))
+        avisoSistema("PV Car en pausa por temperatura",
+            "El teléfono llegó a ${textoTemp()}. PV Car guardó el video y apagó la cámara para protegerlo; retoma sola al enfriarse. " +
+                "Quítalo del sol directo y, si está cargando, usa un cargador lento (no la carga rápida).")
+        Bus.emitir("termico", termicoJson())
+        emitirEstado()
+    }
+
+    private fun reanudarTrasCalor() {
+        pausaTermica = false
+        nivelAplicado = 2 // retoma con la calidad más liviana; sube sola si se sigue enfriando
+        ultimoCambioTermico = System.currentTimeMillis()
+        anotar("termico", "sistema", "Temperatura más baja (${textoTemp()}): grabación retomada en 720p")
+        runCatching { vincular() }
+        abrirFragmento(false)
+        Bus.emitir("termico", termicoJson())
+        emitirEstado()
+    }
 
     private fun emitirEstado() = Bus.emitir("estado", estado())
 }

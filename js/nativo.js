@@ -27,6 +27,7 @@ export const nativo = esNativo ? {
   huella: (id) => llamar("huella", { id }),
   borrar: (ids) => llamar("borrar", { ids }),
   foto: (origen) => llamar("foto", { origen }),
+  vistaPrevia: (activa) => llamar("vistaPrevia", { activa }),
   registro: () => llamar("registro"),
   compartir: (o) => llamar("compartir", o),
   on: (evento, fn) => cap.addListener("PVNativo", evento, (d) => fn(d || {})),
@@ -113,7 +114,9 @@ export class GrabadorNativo extends EventTarget {
     this.sesion = null;
     this.inicio = 0;
     this.llamada = false;
+    this.termico = null;
     this._t = null;
+    nativo.on("termico", (d) => { this.termico = d; this.dispatchEvent(new CustomEvent("termico", { detail: d })); });
     nativo.on("estado", (d) => this._estado(d));
     nativo.on("telemetria", (d) => { this._estado(d); this.tel.recibir(d); });
     nativo.on("llamada", (d) => { this.llamada = !!d.activa; this.dispatchEvent(new CustomEvent("llamada", { detail: this.llamada })); });
@@ -136,6 +139,7 @@ export class GrabadorNativo extends EventTarget {
     if (d.sesion) this.sesion = d.sesion;
     if (d.inicio) this.inicio = d.inicio;
     if (typeof d.llamada === "boolean") this.llamada = d.llamada;
+    if (d.termico) { this.termico = d.termico; this.dispatchEvent(new CustomEvent("temperatura", { detail: d.termico })); }
     this.clipActual = this.grabando ? { id: d.clipActual || this.clipActual?.id || null, protegido: !!d.protegido } : null;
     this.tel.usarNativa(this.grabando);
     if (antes !== this.grabando) this.dispatchEvent(new Event("estado"));

@@ -12,6 +12,7 @@ export const TIPOS = {
   sinEspacio: "Sin espacio: grabación detenida",
   llamada: "Llamada: el video sigue, audio en pausa",
   finLlamada: "Llamada terminada",
+  termico: "Temperatura",
 };
 export const ORIGENES = { manual: "botón", voz: "voz", auto: "automático", sistema: "sistema", notificacion: "notificación", ventana: "ventana flotante" };
 

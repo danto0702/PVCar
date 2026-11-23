@@ -33,6 +33,7 @@
     <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
     <symbol id="i-gps" viewBox="0 0 24 24"><path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><circle cx="12" cy="10" r="2.4" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
     <symbol id="i-g" viewBox="0 0 24 24"><path d="M3 12h4l2.5-6 5 12 2.5-6h4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-temp" viewBox="0 0 24 24"><path d="M10 4a2 2 0 0 1 4 0v9.5a4 4 0 1 1-4 0V4Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M12 10v6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
     <symbol id="i-memoria" viewBox="0 0 24 24"><path d="M8 3h8.5L19 5.5V20a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6l3-3Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M9 3v4M12 3v4M15 3v4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
     <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.8v12.4a.8.8 0 0 0 1.2.7l9.8-6.2a.8.8 0 0 0 0-1.4L9.2 5.1A.8.8 0 0 0 8 5.8Z" fill="currentColor"/></symbol>
     <symbol id="i-compartir" viewBox="0 0 24 24"><path d="M12 15V3M7.5 7.5 12 3l4.5 4.5M5 13v6.5A1.5 1.5 0 0 0 6.5 21h11a1.5 1.5 0 0 0 1.5-1.5V13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
@@ -59,6 +60,7 @@
           <li id="chipGps" class="chip" data-tono="apagado"><svg aria-hidden="true"><use href="#i-gps"/></svg><span class="sr">GPS:</span><b class="valor">—</b></li>
           <li id="chipG" class="chip" data-tono="apagado"><svg aria-hidden="true"><use href="#i-g"/></svg><span class="sr">Fuerza G:</span><b class="valor">—</b></li>
           <li id="chipVoz" class="chip" data-tono="apagado"><svg aria-hidden="true"><use href="#i-mic"/></svg><span class="sr">Copiloto:</span><b class="valor">Voz apagada</b></li>
+          <li id="chipTemp" class="chip" data-tono="apagado" hidden><svg aria-hidden="true"><use href="#i-temp"/></svg><span class="sr">Temperatura:</span><b class="valor">—</b></li>
           <li id="chipEspacio" class="chip" data-tono="apagado"><svg aria-hidden="true"><use href="#i-memoria"/></svg><span class="sr">Memoria:</span><b class="valor">—</b></li>
         </ul>
       </header>
@@ -222,6 +224,8 @@
         <legend>App Android</legend>
         <p class="ayuda">PV Car sigue grabando con la app en segundo plano, con la pantalla apagada o durante una llamada. Mientras graba verás una notificación fija con los botones <b>Proteger</b> y <b>Detener</b>; al salir de la app queda una ventana flotante con la cámara. Si cierras esa ventana, la grabación continúa.</p>
         <p class="ayuda" id="nativoPermisos"></p>
+        <p class="ayuda" id="nativoTemp"></p>
+        <p class="ayuda">Contra el calor, PV Car baja la calidad sola (menos bits, luego 720p a 24 cuadros) y, si el teléfono llega a 47 °C, guarda el video y pausa la cámara hasta que se enfríe. Ayuda mucho: no dejarlo al sol directo del parabrisas, usar un soporte en la rejilla del aire, apagar la pantalla o usar <b>Ahorro</b> (sigue grabando) y cargar con un cargador lento de 18–20 W en vez de la carga rápida.</p>
         <p class="ayuda" id="nativoBateria"></p>
         <button type="button" class="boton sec" id="nativoSinRestriccion" hidden>Permitir sin restricción de batería</button>
         <p class="ayuda" id="nativoVersion"></p>
